@@ -3,7 +3,9 @@
 import rospy
 from geometry_msgs.msg import PoseStamped
 from styx_msgs.msg import Lane, Waypoint
-
+from std_msgs.msg import Int32
+import tf
+import operator
 import math
 
 '''
@@ -32,21 +34,43 @@ class WaypointUpdater(object):
         rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
 
         # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
-
+        rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb)
+        rospy.Subscriber('/obstacle_waypoint', Waypoint, self.obstacle_cb)
 
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
         # TODO: Add other member variables you need below
+        self.waypoints = None
 
         rospy.spin()
 
     def pose_cb(self, msg):
-        # TODO: Implement
-        pass
+        if not self.waypoints:
+        	pass
+        yaw = tf.transformations.euler_from_quaternion([
+        	msg.pose.orientation.x, 
+        	msg.pose.orientation.y, 
+        	msg.pose.orientation.z, 
+        	msg.pose.orientation.w
+        	])[2]
+        fwp = {}
+        for i in range(len(self.waypoints)):
+        	if len(fwp) >= LOOKAHEAD_WPS:
+        		break
+    		else:
+	            wp = self.waypoints[i]
+	            if math.cos(yaw) * (wp.pose.pose.position.x - msg.pose.position.x) + math.sin(yaw) * (wp.pose.pose.position.y - msg.pose.position.y) > 0:
+	            	dist = math.sqrt((wp.pose.pose.position.x - msg.pose.position.x)**2 + (wp.pose.pose.position.y - msg.pose.position.y)**2)
+	            	if dist < 200:
+	            		fwp[wp] = dist
+
+        sorted_fwp = sorted(fwp.items(), key=operator.itemgetter(1))
+        final_waypoints = Lane()
+        final_waypoints.waypoints = [w[0] for w in sorted_fwp]
+        self.final_waypoints_pub.publish(final_waypoints)
 
     def waypoints_cb(self, waypoints):
-        # TODO: Implement
-        pass
+    	self.waypoints = waypoints.waypoints
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
