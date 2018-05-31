@@ -41,42 +41,39 @@ class WaypointUpdater(object):
 
         # TODO: Add other member variables you need below
         self.waypoints = None
+        self.prev_idx = 0
 
         rospy.spin()
 
     def pose_cb(self, msg):
         if not self.waypoints:
-        	pass
-    	# Compute yaw angle from vehicle pose
+            pass
+        # Compute yaw angle from vehicle pose
         yaw = tf.transformations.euler_from_quaternion([
-        	msg.pose.orientation.x, 
-        	msg.pose.orientation.y, 
-        	msg.pose.orientation.z, 
-        	msg.pose.orientation.w
-        	])[2]
-        # Dictionary for sorting waypoints by distance
-        fwp = {}
-        for i in range(len(self.waypoints)):
-        	if len(fwp) >= LOOKAHEAD_WPS:
-        		break
-    		else:
-	            wp = self.waypoints[i]
-	            # If the dot product of yaw vector and vector from vehicle to waypoint is positive
-	            # the waypoint is in the same direction as the vehicle
-	            if math.cos(yaw) * (wp.pose.pose.position.x - msg.pose.position.x) + 
-	                math.sin(yaw) * (wp.pose.pose.position.y - msg.pose.position.y) > 0:
-	            	dist = math.sqrt((wp.pose.pose.position.x - msg.pose.position.x)**2 + (wp.pose.pose.position.y - msg.pose.position.y)**2)
-	            	# Max distance between waypoints is 1.77, so further waypoints should not be considered
-	            	if dist < LOOKAHEAD_WPS * 1.77:
-	            		fwp[wp] = dist
+            msg.pose.orientation.x, 
+            msg.pose.orientation.y, 
+            msg.pose.orientation.z, 
+            msg.pose.orientation.w
+            ])[2]
+        # Find next waypoint, starting from the index of last waypoint for efficiency
+        num_wps = len(self.waypoints)
+        for i in range(self.prev_idx, (self.prev_idx + num_wps)):
+            idx = i % num_wps
+            wp = self.waypoints[idx]
+            # If the dot product of yaw vector and vector from vehicle to waypoint is positive
+            # the waypoint is in the same direction as the vehicle. Use the first one encountered
+            if math.cos(yaw) * (wp.pose.pose.position.x - msg.pose.position.x) + \
+                math.sin(yaw) * (wp.pose.pose.position.y - msg.pose.position.y) > 0:
+                self.prev_idx = idx
+                break
 
-        sorted_fwp = sorted(fwp.items(), key=operator.itemgetter(1))
         final_waypoints = Lane()
-        final_waypoints.waypoints = [w[0] for w in sorted_fwp]
+        # Get next LOOKAHEAD_WPS waypoints after the next waypoint
+        final_waypoints.waypoints = [self.waypoints[i % num_wps] for i in range(self.prev_idx, self.prev_idx + LOOKAHEAD_WPS)]
         self.final_waypoints_pub.publish(final_waypoints)
 
     def waypoints_cb(self, waypoints):
-    	self.waypoints = waypoints.waypoints
+        self.waypoints = waypoints.waypoints
 
     def traffic_cb(self, msg):
         # TODO: Callback for /traffic_waypoint message. Implement
