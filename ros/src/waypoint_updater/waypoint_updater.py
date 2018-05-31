@@ -41,36 +41,42 @@ class WaypointUpdater(object):
 
         # TODO: Add other member variables you need below
         self.waypoints = None
+        self.pose = None
         self.prev_idx = 0
 
-        rospy.spin()
+        self.loop()
+
+    def loop(self):
+    	rate = rospy.Rate(50)
+    	while not rospy.is_shutdown():
+    		if self.pose and self.waypoints:
+		        # Compute yaw angle from vehicle pose
+		        yaw = tf.transformations.euler_from_quaternion([
+		            self.pose.pose.orientation.x, 
+		            self.pose.pose.orientation.y, 
+		            self.pose.pose.orientation.z, 
+		            self.pose.pose.orientation.w
+		            ])[2]
+		        # Find next waypoint, starting from the index of last waypoint for efficiency
+		        num_wps = len(self.waypoints)
+		        for i in range(self.prev_idx, (self.prev_idx + num_wps)):
+		            idx = i % num_wps
+		            wp = self.waypoints[idx]
+		            # If the dot product of yaw vector and vector from vehicle to waypoint is positive
+		            # the waypoint is in the same direction as the vehicle. Use the first one encountered
+		            if math.cos(yaw) * (wp.pose.pose.position.x - self.pose.pose.position.x) + \
+		                math.sin(yaw) * (wp.pose.pose.position.y - self.pose.pose.position.y) > 0:
+		                self.prev_idx = idx
+		                break
+
+		        final_waypoints = Lane()
+		        # Get next LOOKAHEAD_WPS waypoints after the next waypoint
+        		final_waypoints.waypoints = [self.waypoints[i % num_wps] for i in range(self.prev_idx, self.prev_idx + LOOKAHEAD_WPS)]
+		        self.final_waypoints_pub.publish(final_waypoints)
+			rate.sleep()
 
     def pose_cb(self, msg):
-        if not self.waypoints:
-            pass
-        # Compute yaw angle from vehicle pose
-        yaw = tf.transformations.euler_from_quaternion([
-            msg.pose.orientation.x, 
-            msg.pose.orientation.y, 
-            msg.pose.orientation.z, 
-            msg.pose.orientation.w
-            ])[2]
-        # Find next waypoint, starting from the index of last waypoint for efficiency
-        num_wps = len(self.waypoints)
-        for i in range(self.prev_idx, (self.prev_idx + num_wps)):
-            idx = i % num_wps
-            wp = self.waypoints[idx]
-            # If the dot product of yaw vector and vector from vehicle to waypoint is positive
-            # the waypoint is in the same direction as the vehicle. Use the first one encountered
-            if math.cos(yaw) * (wp.pose.pose.position.x - msg.pose.position.x) + \
-                math.sin(yaw) * (wp.pose.pose.position.y - msg.pose.position.y) > 0:
-                self.prev_idx = idx
-                break
-
-        final_waypoints = Lane()
-        # Get next LOOKAHEAD_WPS waypoints after the next waypoint
-        final_waypoints.waypoints = [self.waypoints[i % num_wps] for i in range(self.prev_idx, self.prev_idx + LOOKAHEAD_WPS)]
-        self.final_waypoints_pub.publish(final_waypoints)
+    	self.pose = msg
 
     def waypoints_cb(self, waypoints):
         self.waypoints = waypoints.waypoints
