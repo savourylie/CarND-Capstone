@@ -88,7 +88,7 @@ class WaypointUpdater(object):
         lane = Lane()
         base_waypoints = self.waypoints[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
 
-        
+        '''
         if self.traffic_idx > -1 and self.traffic_idx > self.prev_idx and self.traffic_idx < self.prev_idx + LOOKAHEAD_WPS:
             lane.waypoints = self.simple_decelerate_waypoints(base_waypoints)
         else:
@@ -113,7 +113,7 @@ class WaypointUpdater(object):
                 lane.waypoints = base_waypoints
         else:
             lane.waypoints = self.accelerate_waypoints(base_waypoints, current_acc, current_vel)
-        '''
+        
         return lane
 
     def simple_decelerate_waypoints(self, waypoints):
@@ -148,7 +148,7 @@ class WaypointUpdater(object):
     def decelerate_waypoints(self, waypoints, current_acc, current_vel, dist):
         jerk_dict = {j: self.get_status_change_points(current_vel, current_acc, j) for j in range(2, 11, 2)}
         jerk_dict_filt = {j: (s1, s2, s3, v1_end, v2_end) for j, (s1, s2, s3, v1_end, v2_end) in jerk_dict.iteritems() if v1_end >= v2_end and dist > s1 + s2 + s3}
-        jerk = min(jerk_dict_filt.iteritems(), key=itemgetter(0))
+        jerk = min(jerk_dict_filt.iteritems(), key=operator.itemgetter(0))
         s1, s2, s3, v1_end, v2_end = jerk_dict_filt[jerk]
 
         temp = []
@@ -184,15 +184,19 @@ class WaypointUpdater(object):
             p = Waypoint()
             p.pose = wp.pose
             dist = self.distance(waypoints, max(0,i-1), max(1,i))
-            if current_vel < 1.:
+            rospy.logwarn("%.1f %.1f" % (current_vel, current_acc))
+            if current_vel < 0.1:
                 t = (6 * dist / self.min_jerk)**(1/3)
             else:
-                t = dist / current_vel
+                if abs(current_acc) < 0.1 or current_vel**2 - 2 * current_acc * dist < 0.:
+                    t = dist / current_vel
+                else:
+                    t = (math.sqrt(current_vel**2 - 2 * current_acc * dist) - current_vel) / current_acc
             if positive_jerk:
                 current_vel += current_acc * t + self.min_jerk * t**2 / 2
                 current_acc += self.min_jerk * t
                 p.twist.twist.linear.x = min(current_vel, wp.twist.twist.linear.x)
-                if current_acc > self.min_acc or current_vel > self.max_speed - self.min_jerk * (current_acc / self.min_jerk)**2 / 2:
+                if current_vel > self.max_speed - self.min_jerk * (current_acc / self.min_jerk)**2 / 2:
                     positive_jerk = False
             else:
                 current_vel += current_acc * t - self.min_jerk * t**2 / 2
