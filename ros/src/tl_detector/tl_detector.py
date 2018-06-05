@@ -165,9 +165,9 @@ class TLDetector(object):
             # Find index of light
             lt_wp = {lt: self.get_closest_waypoint_pose(lt.pose) for lt in self.lights}
             lt_wp_filt = {lt: wp for lt, wp in lt_wp.iteritems() if wp > car_idx}
-            light = min(lt_wp_filt.iteritems(), key=operator.itemgetter(1))[0]
-
-            stop_wp = min([wp for wp in [self.get_closest_waypoint(*stop) for stop in self.config['stop_line_positions']] if wp > car_idx])
+            light = min(lt_wp_filt.iteritems(), key=operator.itemgetter(1))[0] if len(lt_wp_filt) > 0 else None
+            wps = [wp for wp in [self.get_closest_waypoint(*stop) for stop in self.config['stop_line_positions']] if wp > car_idx]
+            stop_wp = min(wps) if len(wps) > 0 else None
 
             if stop_wp and light:
                 state = self.get_light_state(light)

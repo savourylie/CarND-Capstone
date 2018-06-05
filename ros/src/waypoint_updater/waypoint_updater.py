@@ -34,15 +34,12 @@ class WaypointUpdater(object):
 
         rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)
         rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)
-
-        # TODO: Add a subscriber for /traffic_waypoint and /obstacle_waypoint below
         rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb)
         rospy.Subscriber('/obstacle_waypoint', Waypoint, self.obstacle_cb)
         rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb)
 
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', Lane, queue_size=1)
 
-        # TODO: Add other member variables you need below
         self.current_velocity = None
         self.current_acceleration = None
         self.last_time = None
@@ -55,14 +52,15 @@ class WaypointUpdater(object):
         self.max_acc = 10.
         self.min_acc = .1
         self.max_jerk = 10.
-        self.min_jerk = .1
+        self.min_jerk = .2
 
         self.loop()
 
     def loop(self):
-        rate = rospy.Rate(50)
+        # TODO: Change to 20 if lag
+        rate = rospy.Rate(20)
         while not rospy.is_shutdown():
-            if self.pose and self.waypoints:
+            if self.pose and self.waypoints and self.waypoints_cache:
                 # Compute yaw angle from vehicle pose
                 yaw = tf.transformations.euler_from_quaternion([
                     self.pose.pose.orientation.x, 
@@ -88,135 +86,124 @@ class WaypointUpdater(object):
 
     def generate_lane(self):
         lane = Lane()
-
-        '''
-        if self.traffic_idx > -1 and self.traffic_idx > self.prev_idx and self.traffic_idx < self.prev_idx + LOOKAHEAD_WPS:
-            lane.waypoints = self.simple_decelerate_waypoints(base_waypoints)
-        else:
-            lane.waypoints = base_waypoints
-            #lane.waypoints = self.simple_accelerate_waypoints(base_waypoints)
-        '''
-        current_vel = self.current_velocity.linear.x
+        # Get a copy of current velocity and acceleration since they will be modified
+        current_vel = copy.copy(self.current_velocity.linear.x)
         current_acc = 0. if self.current_acceleration == None else copy.copy(self.current_acceleration)
+        # When red light is in front
+        if self.traffic_idx > -1 and self.traffic_idx - 2 > self.prev_idx and self.traffic_idx < self.prev_idx + LOOKAHEAD_WPS:
+            # Do not modify if decelerating waypoint cache has already been generated
+            # To avoid creeping, don't modify if already close to stop line
+            if all(self.max_speed > x.twist.twist.linear.x > y.twist.twist.linear.x - 1e-3 for x, y in zip(self.waypoints_cache[self.prev_idx:self.traffic_idx-1], self.waypoints_cache[self.prev_idx+1:self.traffic_idx])) or self.traffic_idx - self.prev_idx < 10:
+                lane.waypoints = self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
+                return lane
 
-        rospy.logwarn("%d %d" % (self.traffic_idx, self.prev_idx))
-        if self.traffic_idx > -1 and current_vel > 1. and self.traffic_idx > self.prev_idx and self.traffic_idx < self.prev_idx + LOOKAHEAD_WPS:
-            dist = self.distance(self.waypoints, self.prev_idx, self.traffic_idx - 2)
-            max_distance = current_vel**2 / (2 * self.min_acc)
-            rospy.logwarn(", %.0f, %.0f" % (dist, max_distance))
-            if dist < max_distance:
-                rospy.logwarn("Decelerate")
-                jerk_dict = {j/10.: self.get_status_change_points(current_vel, current_acc, j/10.) for j in range(1, 100)}
-                jerk_dict_filt = {j: (s1, s2, s3, v1_end, v2_end) for j, (s1, s2, s3, v1_end, v2_end) in jerk_dict.iteritems() if v1_end >= v2_end and dist > s1 + s2 + s3}
-                if len(jerk_dict_filt) > 0:
-                    jerk = min(jerk_dict_filt.iteritems(), key=operator.itemgetter(0))
-                    rospy.logwarn("%.0f, %.0f" % (dist, jerk[1][0] + jerk[1][1] + jerk[1][2]))
-                    lane.waypoints = self.decelerate_waypoints(current_acc, current_vel, dist, jerk)
-                    return lane
-            '''
-            else:
-                rospy.logwarn("Const")
-                #lane.waypoints = base_waypoints
-                lane.waypoints = self.accelerate_waypoints(base_waypoints, current_acc, current_vel)
-        else:
-        '''
-        rospy.logwarn("Accelerate")
+            # Formula for deceleration with constant jerk (with sign flip and no constant acceleration part): 
+            # S = s1 + s2, differentiated by the sign of jerk, each part taking the the time: T = 2 * t
+            # v_mid = v_entry / 2 = a_max * t
+            # a_max = j * t
+            # v_entry = j * t^2
+            # S = v_entry^2 / a_max = v_entry^2 / (j*t) = j * t^3
+            # v_entry = j * t^2
+            # t = S / v_entry
+            # j = v_entry^3 / S^2
+            dist = self.distance(self.waypoints, self.prev_idx, self.traffic_idx - 3)
+            jerk = current_vel**3 / dist**2
+            # Only generate deceleration waypoints if close enough to red light (implying meaningful jerk and deceleration)
+            if jerk > self.max_speed / 30.:
+                lane.waypoints = self.decelerate_waypoints(current_acc, current_vel, dist, jerk)
+                return lane
+
+        # For all other scenario, just accelerate or go at speed limit
         lane.waypoints = self.accelerate_waypoints(current_acc, current_vel)
-        rospy.logwarn(["%.2f" % wp.twist.twist.linear.x for wp in lane.waypoints])
         
         return lane
 
-    def simple_decelerate_waypoints(self, waypoints):
-        temp = []
-        for i, wp in enumerate(waypoints):
-            p = Waypoint()
-            p.pose = wp.pose
-            stop_idx = max(self.traffic_idx - self.prev_idx - 2, 0)
-            dist = self.distance(waypoints, i, stop_idx)
-            vel = math.sqrt(2 * self.max_acc * dist)
-            if vel < 1.:
-                vel = 0.
-            p.twist.twist.linear.x = min(vel, wp.twist.twist.linear.x)
-            temp.append(p)
-        return temp
-
     def decelerate_waypoints(self, current_acc, current_vel, dist, jerk):
-        s1, s2, s3, v1_end, v2_end = jerk[1]
-
         stopped = False
+        t_half = dist / current_vel
+        s2 = jerk * t_half**3 / 6.
+        s1 = dist - s2
         for i in range(LOOKAHEAD_WPS):
-            abs_idx = i + self.prev_idx
+            abs_idx = (i + self.prev_idx) % len(self.waypoints)
+            # Set velocity to 0 for all waypoints after having stopped
             if stopped == True:
                 self.waypoints_cache[abs_idx].twist.twist.linear.x = 0.
             else:
-                ref_vel = self.waypoints[i + self.prev_idx].twist.twist.linear.x
                 dsum = self.distance(self.waypoints, self.prev_idx - 1, abs_idx)
-                d = self.distance(self.waypoints, abs_idx - 1, abs_idx)
-                if dsum < s1:
-                    coeff = [-jerk[0] / 6., current_acc / 2., current_vel, -d]
+                d = self.distance(self.waypoints, abs_idx, abs_idx + 1)
+                # First part of deceleration with negative jerk, solve cubic polynomial for t during each segment
+                if dsum < s1 + 1e-3:
+                    coeff = [-jerk / 6., current_acc / 2., current_vel, -d]
                     r = np.roots(coeff)
-                    t = r.real[abs(r.imag)<1e-5][0]
-                    current_vel += current_acc * t - jerk[0] * t**2 / 2
-                    current_acc -= jerk[0] * t
-                elif dsum < s1 + s2:
-                    t = (-current_vel - math.sqrt(current_vel**2 + 2 * current_acc * d)) / current_acc
-                    current_vel += current_acc * t
-                elif dsum < s1 + s2 + s3:
-                    coeff = [jerk[0] / 6., current_acc / 2., current_vel, -d]
+                    t = min([rr for rr in r.real[abs(r.imag)<1e-5] if rr > 0])
+                    current_vel += current_acc * t - jerk * t**2 / 2
+                    current_acc -= jerk * t
+                # Second part of deceleration with positive jerk, also need to solve for t
+                elif dsum < dist + 1e-3:
+                    coeff = [jerk / 6., current_acc / 2., current_vel, -d]
                     r = np.roots(coeff)
-                    t = r.real[abs(r.imag)<1e-5][0]
-                    current_vel += current_acc * t + jerk[0] * t**2 / 2
-                    current_acc += jerk[0] * t
+                    t = min([rr for rr in r.real[abs(r.imag)<1e-5] if rr > 0])
+                    current_vel += current_acc * t + jerk * t**2 / 2
+                    current_acc += jerk * t
+                # Should be stopped after the specified distance
+                else:
+                    stopped = True
+                    current_vel = 0.
                 if current_vel < 0.:
                     stopped = True
-                rospy.logwarn("%.2f %.2f" % (current_vel, current_acc))
-                self.waypoints_cache[abs_idx].twist.twist.linear.x = min(max(0,current_vel), ref_vel)
+                ref_vel = self.waypoints[abs_idx].twist.twist.linear.x
+                # Limit speed
+                self.waypoints_cache[abs_idx].twist.twist.linear.x = min(max(0.,current_vel), ref_vel)
 
+        rospy.logwarn([wp.twist.twist.linear.x for wp in self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]])
         return self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
 
     def accelerate_waypoints(self, current_acc, current_vel):
-        # do not modify if already generated
-        if current_vel > 1e-3 and all(1e-3 < x.twist.twist.linear.x < y.twist.twist.linear.x + 1e-3 for x, y in zip(self.waypoints_cache[self.prev_idx:self.prev_idx+LOOKAHEAD_WPS], self.waypoints_cache[self.prev_idx+1:self.prev_idx+LOOKAHEAD_WPS+1])):
+        # Do not modify if accelerating waypoint cache has already been generated
+        if current_vel > 1e-2 and all(1e-2 < x.twist.twist.linear.x < y.twist.twist.linear.x + 1e-3 for x, y in zip(self.waypoints_cache[self.prev_idx:self.prev_idx+LOOKAHEAD_WPS], self.waypoints_cache[self.prev_idx+1:self.prev_idx+LOOKAHEAD_WPS+1])):
             return self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
-        # generate new cache if stopped, or has decelerating waypoint cache in front
+        # Generate new cache if stopped, or has decelerating waypoint cache in front
         positive_jerk = True
         for i in range(LOOKAHEAD_WPS):
-            abs_idx = i + self.prev_idx
+            abs_idx = (i + self.prev_idx) % len(self.waypoints)
             ref_vel = self.waypoints[abs_idx].twist.twist.linear.x
-            # set to terminal velocity if not accelerating
+            # Set to terminal velocity if done accelerating
             if positive_jerk == None:
                 self.waypoints_cache[abs_idx].twist.twist.linear.x = ref_vel
             else:
-                # solve cubic polynomial involving jerk for duration between waypoints
+                # Solve cubic polynomial involving jerk for duration between waypoints
                 dist = self.distance(self.waypoints, abs_idx - 1, abs_idx)
                 jerk = self.min_jerk if positive_jerk == True else -self.min_jerk
                 coeff = [jerk / 6., current_acc / 2., current_vel, -dist]
                 r = np.roots(coeff)
-                t = r.real[abs(r.imag)<1e-5][0]
-                # calculate new velocity and acceleration at next waypoint
+                t = min([rr for rr in r.real[abs(r.imag)<1e-5] if rr > 0])
+                # Calculate new velocity and acceleration at next waypoint
                 current_vel += current_acc * t + jerk * t**2 / 2
                 current_acc += jerk * t
-                self.waypoints_cache[abs_idx].twist.twist.linear.x = min(max(0,current_vel), ref_vel)
-                # slow down acceleration after having achieved half of speed limit
+                self.waypoints_cache[abs_idx].twist.twist.linear.x = min(max(0.,current_vel), ref_vel)
+                # Turn down acceleration after having reached half of speed limit
                 if positive_jerk == True:
                     if current_vel > (self.max_speed + current_vel) / 2.05:
                         positive_jerk = False
-                # stop accelerating and use terminal velocity if acceleration has decreased to 0
+                # Stop accelerating and use terminal velocity if acceleration has decreased to 0
                 elif positive_jerk == False:
                     if current_acc < 0.:
                         positive_jerk = None
                         self.waypoints_cache[abs_idx].twist.twist.linear.x = ref_vel
-        # return cached waypoints
+        # Return cached waypoints
         return self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
 
     def pose_cb(self, msg):
         self.pose = msg
 
     def waypoints_cb(self, waypoints):
+        # Save waypoints for reference
         self.waypoints = waypoints.waypoints
-        self.waypoints_cache = self.waypoints[:]
+        # Make another copy for editing
+        self.waypoints_cache = copy.deepcopy(self.waypoints)
 
     def velocity_cb(self, msg):
+        # Use last velocity and time stamp to calculate current acceleration
         if not self.current_velocity == None:
             old_vel = self.current_velocity.linear.x
         self.current_velocity = msg.twist
@@ -225,21 +212,6 @@ class WaypointUpdater(object):
             if t.to_sec() > 1e-3:
                 self.current_acceleration = (msg.twist.linear.x - old_vel) / t.to_sec()
         self.last_time = msg.header.stamp
-
-    def get_status_change_points(self, current_vel, current_acc, jerk):
-        # min_break_distance: jerk until max_decel, v steady decr, until jerk to 0 acc & 0 velocity
-        t1 = (self.max_acc + current_acc) / jerk
-        v1_end = current_vel + current_acc * t1 + jerk * t1**2 / 2
-        s1 = max(0, current_vel * t1 + current_acc * t1**2 / 2 + jerk * t1**3 / 6)
-
-        t3 = self.max_acc / jerk
-        v2_end = jerk * t3**2 / 2 
-        s3 = jerk * t3**3 / 6
-
-        t2 = max(0, (v1_end - v2_end) / self.max_acc)
-        s2 = max(0, v2_end * t2 + self.max_acc * t2**2 / 2)
-
-        return s1, s2, s3, v1_end, v2_end
 
     def traffic_cb(self, msg):
         self.traffic_idx = msg.data
