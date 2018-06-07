@@ -129,7 +129,7 @@ class TLDetector(object):
             closest_idx = (closest_idx + 1) % len(self.waypoints_2d)
         return closest_idx
 
-    def get_light_state(self, light):
+    def get_light_state(self, light, diff_idx):
         """Determines the current color of the traffic light
 
         Args:
@@ -143,11 +143,14 @@ class TLDetector(object):
             self.prev_light_loc = None
             return False
 
-        cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
+        if diff_idx < 300:
+            cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
-        #Get classification
-        #return self.light_classifier.get_classification(cv_image)
-        return light.state
+            #Get classification
+            state = self.light_classifier.get_classification(cv_image)
+            rospy.logwarn(state)
+            return state
+        return TrafficLight.UNKNOWN
 
     def process_traffic_lights(self):
         """Finds closest visible traffic light, if one exists, and determines its
@@ -170,7 +173,7 @@ class TLDetector(object):
             stop_wp = min(wps) if len(wps) > 0 else None
 
             if stop_wp and light:
-                state = self.get_light_state(light)
+                state = self.get_light_state(light, stop_wp - car_idx)
                 return stop_wp, state
 
         return -1, TrafficLight.UNKNOWN

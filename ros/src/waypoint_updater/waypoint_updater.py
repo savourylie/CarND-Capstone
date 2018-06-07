@@ -81,6 +81,7 @@ class WaypointUpdater(object):
                         break
 
                 final_waypoints = self.generate_lane()
+                #rospy.logwarn([wp.twist.twist.linear.x for wp in self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]])
                 self.final_waypoints_pub.publish(final_waypoints)
             rate.sleep()
 
@@ -155,7 +156,6 @@ class WaypointUpdater(object):
                 # Limit speed
                 self.waypoints_cache[abs_idx].twist.twist.linear.x = min(max(0.,current_vel), ref_vel)
 
-        rospy.logwarn([wp.twist.twist.linear.x for wp in self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]])
         return self.waypoints_cache[self.prev_idx : self.prev_idx + LOOKAHEAD_WPS]
 
     def accelerate_waypoints(self, current_acc, current_vel):
