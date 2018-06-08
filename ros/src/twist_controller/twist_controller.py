@@ -16,6 +16,7 @@ class Controller(object):
         self.accel_limit = accel_limit
         self.wheel_radius = wheel_radius
 
+        # Getting PID params from Ziegler-Nichols Tuning Rule
         Ku = 0.5
         Pu = 6
         Kp = 0.6 * Ku
@@ -27,6 +28,7 @@ class Controller(object):
 
         self.yaw_controller = YawController(wheel_base, steer_ratio, min_speed, max_lat_accel, max_steer_angle)
 
+        # Smoothes velocity reading
         tau = 0.5
         ts = 0.02
         self.velocity_lowpass = LowPassFilter(tau, ts)
@@ -35,6 +37,7 @@ class Controller(object):
         self.timestamp = rospy.get_time()
 
     def control(self, target_twist, current_velocity, dbw_enabled):
+        # Clear PID error when in manual mode
         if not dbw_enabled:
             self.pid_controller.reset()
             return 0., 0., 0.
@@ -47,16 +50,20 @@ class Controller(object):
         target_linear_velocity = target_twist.linear.x
         vel_diff = target_linear_velocity - current_velocity
 
+        # PID controller generate throttle directly
         throttle = self.pid_controller.step(vel_diff, dt)
         brake = 0.
 
+        # Break needed to hold still
         if target_linear_velocity == 0. and current_velocity < 0.1:
             throttle = 0.
             brake = 700.
+        # If need to break, calculate break torque
         elif throttle < 0.1 and vel_diff < 0:
             throttle = 0.
             brake = abs(max(vel_diff / dt, self.decel_limit)) * self.vehicle_mass * self.wheel_radius
 
+        # Yaw controller generate steer directly
         steer = self.yaw_controller.get_steering(target_linear_velocity, target_twist.angular.z, current_velocity)
         # Return throttle, brake, steer
         return throttle, brake, steer

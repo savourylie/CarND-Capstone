@@ -109,9 +109,12 @@ class WaypointUpdater(object):
             # j = v_entry^3 / S^2
             dist = self.distance(self.waypoints, self.prev_idx, self.traffic_idx - 3)
             jerk = current_vel**3 / dist**2
+            t_half = dist / current_vel
+            a_max = jerk * t_half
             # Only generate deceleration waypoints if close enough to red light (implying meaningful jerk and deceleration)
-            if jerk > self.max_speed / 30.:
-                lane.waypoints = self.decelerate_waypoints(current_acc, current_vel, dist, jerk)
+            # Don't decelerate if too close (should be yellow light in this scenario; stopping needs high jerk and deceleration)
+            if jerk > self.max_speed / 30. and jerk < self.max_jerk and a_max < self.max_acc:
+                lane.waypoints = self.decelerate_waypoints(current_acc, current_vel, dist, jerk, t_half)
                 return lane
 
         # For all other scenario, just accelerate or go at speed limit
@@ -119,9 +122,8 @@ class WaypointUpdater(object):
         
         return lane
 
-    def decelerate_waypoints(self, current_acc, current_vel, dist, jerk):
+    def decelerate_waypoints(self, current_acc, current_vel, dist, jerk, t_half):
         stopped = False
-        t_half = dist / current_vel
         s2 = jerk * t_half**3 / 6.
         s1 = dist - s2
         for i in range(LOOKAHEAD_WPS):
