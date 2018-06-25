@@ -1,0 +1,5 @@
+This traffic light classifier was created by fine-tuning the weights of the MobileNet V2 model available through TensorFlow Hub at (https://www.tensorflow.org/hub/modules/google/imagenet/mobilenet_v2_140_224/classification/2)
+
+In the training data, the traffic light classes for the simulator images were kept separate from the classes for the tangible test track images. In particular, while the test track class labels are still 0, 1, 2, and 4, all the simulator class labels have been shifted by 10 to keep them distinct: 0 -> 10, 1 -> 11, 2 -> 12, 4 -> 14. This yielded a classifier with higher accuracy than the one obtained by merging the test track and simulator images for each class for training. Intuitively, the traffic lights in each of the two driving domains are fairly homogeneous, but the simulated traffic lights appear quite different from the test track lights, regardless of color. So classifying them separately seems reasonable.
+
+Thus, images labeled either 0 or 10 are the ones where the traffic light is red.
