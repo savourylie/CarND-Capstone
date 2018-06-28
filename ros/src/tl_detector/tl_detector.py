@@ -151,7 +151,7 @@ class TLDetector(object):
             return False
 
         # Only detect when close enough to next light
-        if diff_idx < 200:
+        if diff_idx < 200 and hasattr(self, "light_classifier"):
             cv_image = self.bridge.imgmsg_to_cv2(self.camera_image, "bgr8")
 
             #Get classification
