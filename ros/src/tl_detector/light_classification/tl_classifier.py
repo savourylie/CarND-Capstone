@@ -56,6 +56,9 @@ class TLClassifier(object):
         # only classify 1/10 of all camera images. use only when GPU is not available
         if self.ct % 10 != 0:
             return Counter(self.queue).most_common(1)[0][0]
+
+        # OpenCV uses BGR by default, while our classifier is trained on RGB JPEGs
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         image = cv2.resize(image, dsize=(224,224))
         image = cv2.normalize(image, None, 0., 1., cv2.NORM_MINMAX)
         np_image = np.asarray(image)
