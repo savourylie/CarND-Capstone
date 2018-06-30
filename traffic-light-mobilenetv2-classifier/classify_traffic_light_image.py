@@ -70,8 +70,8 @@ if __name__ == "__main__":
   file_name = "~/yumenoshizuku/real_pic/4/left1988.jpg"
   model_file = "./real_and_sim_disjoint_output_graph.pb"
   label_file = "./real_and_sim_disjoint_output_labels.txt"
-  input_height = 224
-  input_width = 224
+  input_height = 128
+  input_width = 128
   input_mean = 0
   input_std = 255
   input_layer = "input"
