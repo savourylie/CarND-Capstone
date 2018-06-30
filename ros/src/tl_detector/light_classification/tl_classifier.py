@@ -59,7 +59,9 @@ class TLClassifier(object):
 
         # OpenCV uses BGR by default, while our classifier is trained on RGB JPEGs
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.resize(image, dsize=(224,224))
+        input_height = 128
+        input_width = 128
+        image = cv2.resize(image, dsize=(input_width, input_height))
         image = cv2.normalize(image, None, 0., 1., cv2.NORM_MINMAX)
         np_image = np.asarray(image)
         np_final = np.expand_dims(np_image, axis=0)
